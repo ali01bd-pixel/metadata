@@ -94,30 +94,36 @@
   <div id="settingsModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
     <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
       <div class="flex justify-between items-center">
-        <h3 class="text-lg font-bold">AI Provider & Multi-Key Settings</h3>
+        <h3 class="text-lg font-bold">AI Model & Multi-Key Settings</h3>
         <button onclick="toggleSettingsModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
       </div>
       
       <div>
-        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">AI Provider</label>
-        <select id="aiProvider" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500" onchange="updateProviderHint()">
-          <option value="gemini">Google Gemini (Gemini 1.5 Flash - Free Tier Available)</option>
-          <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+        <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Select AI Model</label>
+        <select id="aiModel" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500" onchange="updateProviderHint()">
+          <optgroup label="Google Gemini (Free API Tier Available)">
+            <option value="gemini-3.7-flash" selected>Gemini 3.7 Flash (Latest & Most Capable)</option>
+            <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Fastest & Lightweight)</option>
+          </optgroup>
+          <optgroup label="OpenAI (Requires API Balance)">
+            <option value="gpt-4o-mini">ChatGPT (GPT-4o-mini - Fast/Cost-Effective)</option>
+            <option value="gpt-4o">ChatGPT (GPT-4o - Highest Intelligence)</option>
+          </optgroup>
         </select>
       </div>
 
       <div>
         <div class="flex justify-between items-center mb-1">
           <label class="block text-xs font-semibold uppercase text-slate-400">API Keys (One per line for auto-rotation)</label>
-          <span class="text-[11px] text-blue-400">Stored locally in your browser</span>
+          <span class="text-[11px] text-blue-400">Stored locally</span>
         </div>
-        <textarea id="apiKeysInput" rows="4" placeholder="key_1&#10;key_2&#10;key_3" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-mono text-xs focus:outline-none focus:border-blue-500"></textarea>
+        <textarea id="apiKeysInput" rows="4" placeholder="sk-key_1&#10;sk-key_2&#10;sk-key_3" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-mono text-xs focus:outline-none focus:border-blue-500"></textarea>
         <p id="providerHint" class="text-[11px] text-slate-400 mt-1">Get free keys from <a href="https://aistudio.google.com/" target="_blank" class="text-blue-400 underline">Google AI Studio</a>.</p>
       </div>
 
       <div class="flex justify-end gap-2 pt-2">
         <button onclick="toggleSettingsModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm">Cancel</button>
-        <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold">Save Keys</button>
+        <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold">Save Settings</button>
       </div>
     </div>
   </div>
@@ -137,9 +143,15 @@
 
     // Load saved settings
     window.addEventListener('DOMContentLoaded', () => {
-      const savedProvider = localStorage.getItem('meta_ai_provider') || 'gemini';
+      const savedModel = localStorage.getItem('meta_ai_model') || 'gemini-3.7-flash';
       const savedKeys = localStorage.getItem('meta_ai_keys') || '';
-      document.getElementById('aiProvider').value = savedProvider;
+      
+      const modelSelect = document.getElementById('aiModel');
+      // Ensure the saved model exists in the dropdown
+      if(modelSelect.querySelector(`option[value="${savedModel}"]`)) {
+        modelSelect.value = savedModel;
+      }
+      
       document.getElementById('apiKeysInput').value = savedKeys;
       updateProviderHint();
     });
@@ -150,19 +162,19 @@
     }
 
     function updateProviderHint() {
-      const provider = document.getElementById('aiProvider').value;
+      const model = document.getElementById('aiModel').value;
       const hint = document.getElementById('providerHint');
-      if (provider === 'gemini') {
+      if (model.includes('gemini')) {
         hint.innerHTML = 'Get free keys from <a href="https://aistudio.google.com/" target="_blank" class="text-blue-400 underline">Google AI Studio</a>.';
       } else {
-        hint.innerHTML = 'Get API keys from <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-400 underline">OpenAI Platform</a>.';
+        hint.innerHTML = 'Get API keys from <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-400 underline">OpenAI Platform</a> (Requires credit balance).';
       }
     }
 
     function saveSettings() {
-      const provider = document.getElementById('aiProvider').value;
+      const model = document.getElementById('aiModel').value;
       const keys = document.getElementById('apiKeysInput').value.trim();
-      localStorage.setItem('meta_ai_provider', provider);
+      localStorage.setItem('meta_ai_model', model);
       localStorage.setItem('meta_ai_keys', keys);
       toggleSettingsModal();
     }
@@ -248,7 +260,9 @@
         return;
       }
 
-      const provider = localStorage.getItem('meta_ai_provider') || 'gemini';
+      const selectedModel = localStorage.getItem('meta_ai_model') || 'gemini-3.7-flash';
+      const isGemini = selectedModel.includes('gemini');
+      
       const btn = document.getElementById('processBtn');
       btn.disabled = true;
 
@@ -267,10 +281,10 @@
           let result;
           const base64Data = item.file.type.startsWith('image/') ? await fileToBase64(item.file) : null;
           
-          if (provider === 'gemini') {
-            result = await callGeminiAPI(apiKey, item.filename, base64Data, item.file.type);
+          if (isGemini) {
+            result = await callGeminiAPI(apiKey, item.filename, base64Data, item.file.type, selectedModel);
           } else {
-            result = await callOpenAIAPI(apiKey, item.filename, base64Data);
+            result = await callOpenAIAPI(apiKey, item.filename, base64Data, selectedModel);
           }
 
           item.title = result.title;
@@ -327,9 +341,9 @@ Ensure:
 2. Keywords array has between 15 and 25 items, all lowercase, comma-separated concepts, ordered from most relevant to general.
 3. Return raw valid JSON only, no markdown ticks.`;
 
-    // Google Gemini API Call
-    async function callGeminiAPI(apiKey, filename, base64Image, mimeType) {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Google Gemini API Call (Dynamically injects model ID)
+    async function callGeminiAPI(apiKey, filename, base64Image, mimeType, modelId) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
       
       const contents = [{
         parts: [
@@ -361,8 +375,8 @@ Ensure:
       return JSON.parse(text);
     }
 
-    // OpenAI API Call
-    async function callOpenAIAPI(apiKey, filename, base64Image) {
+    // OpenAI API Call (Dynamically injects model ID)
+    async function callOpenAIAPI(apiKey, filename, base64Image, modelId) {
       const endpoint = 'https://api.openai.com/v1/chat/completions';
       
       const userContent = [{ type: "text", text: `Filename: ${filename}` }];
@@ -380,7 +394,7 @@ Ensure:
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          model: modelId,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
