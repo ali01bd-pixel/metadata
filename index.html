@@ -31,7 +31,7 @@
         <input type="file" id="fileInput" multiple accept="image/png, image/jpeg, image/webp, image/svg+xml, .eps" class="hidden" onchange="handleFileSelect(event)" />
         <i class="fa-solid fa-cloud-arrow-up text-4xl text-blue-400 mb-3"></i>
         <h3 class="font-semibold text-lg">Click or Drag & Drop Images / Vectors</h3>
-        <p class="text-xs text-slate-400 mt-1">Supports JPG, PNG, WEBP, SVG, and EPS (with Auto-Fallback)</p>
+        <p class="text-xs text-slate-400 mt-1">Supports JPG, PNG, WEBP, SVG, and EPS (with 3-Strike Auto-Retry)</p>
       </div>
 
       <div class="bg-slate-800 border border-slate-700 p-6 rounded-2xl flex flex-col justify-between space-y-4">
@@ -170,7 +170,6 @@
       return key;
     }
 
-    // EPS XMP Extractor 
     async function extractEpsThumbnail(file) {
       return new Promise((resolve) => {
         const reader = new FileReader();
@@ -186,7 +185,6 @@
       });
     }
 
-    // Standard Image Extractor
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -196,7 +194,6 @@
       });
     }
 
-    // Handle File Selection
     async function handleFileSelect(e) {
       const files = Array.from(e.target.files);
       if (!files.length) return;
@@ -246,7 +243,6 @@
       document.getElementById('exportBtn').disabled = completed === 0;
     }
 
-    // Ultra-Safe JSON Parser
     function safeParseJSON(text) {
       try {
         let cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -259,7 +255,7 @@
       }
     }
 
-    // Batch Process Engine
+    // BULLETPROOF PROCESSING ENGINE WITH 3-STRIKE RETRY
     async function startProcessing() {
       const pendingItems = fileQueue.filter(i => i.status === 'Pending' || i.status === 'Failed');
       if (pendingItems.length === 0) return alert("No pending files to process.");
@@ -279,10 +275,10 @@
 
         updateRowStatus(item.id, 'Processing', 'bg-blue-900 text-blue-300 animate-pulse', "Sending to AI...");
 
-        try {
-          let base64Image = null;
-          let safeMimeType = 'image/jpeg';
+        let base64Image = null;
+        let safeMimeType = 'image/jpeg';
 
+        try {
           if (item.file.name.toLowerCase().endsWith('.eps')) {
             const epsThumb = await extractEpsThumbnail(item.file);
             if (epsThumb) { base64Image = epsThumb.data; safeMimeType = epsThumb.mimeType; }
@@ -291,47 +287,59 @@
             base64Image = extracted.data;
             safeMimeType = ['image/jpeg', 'image/png', 'image/webp'].includes(extracted.mimeType) ? extracted.mimeType : 'image/jpeg';
           }
-          
-          let result;
-          
-          // API Auto-Fallback Strategy
+        } catch (e) {
+          console.warn("Failed to extract image, proceeding with text only");
+        }
+        
+        let result = null;
+        let attempt = 1;
+        let finalError = "";
+
+        // 3-STRIKE RETRY LOOP
+        while (attempt <= 3 && !result) {
           try {
-            if (isGemini) result = await callGeminiAPI(apiKey, item.filename, base64Image, safeMimeType, selectedModel);
-            else result = await callOpenAIAPI(apiKey, item.filename, base64Image, selectedModel);
-          } catch (primaryError) {
-            if (base64Image) {
-              console.warn("Visual payload rejected by AI, automatically retrying with text only...");
-              // Retry without the image payload
-              if (isGemini) result = await callGeminiAPI(apiKey, item.filename, null, null, selectedModel);
-              else result = await callOpenAIAPI(apiKey, item.filename, null, selectedModel);
+            if (attempt === 1 && base64Image) {
+              // Strike 1: Try with Image Data
+              if (isGemini) result = await callGeminiAPI(apiKey, item.filename, base64Image, safeMimeType, selectedModel);
+              else result = await callOpenAIAPI(apiKey, item.filename, base64Image, safeMimeType, selectedModel);
             } else {
-              throw primaryError;
+              // Strike 2 & 3: Fallback to Text-Only (Bypasses Safety Blocks and Image Formatting Errors)
+              if (attempt === 2) updateRowStatus(item.id, 'Retrying', 'bg-orange-900 text-orange-300 animate-pulse', "Visual rejected, retrying with filename only...");
+              
+              if (isGemini) result = await callGeminiAPI(apiKey, item.filename, null, null, selectedModel);
+              else result = await callOpenAIAPI(apiKey, item.filename, null, null, selectedModel);
+            }
+          } catch (err) {
+            finalError = err.message;
+            console.error(`Attempt ${attempt} failed for ${item.filename}:`, finalError);
+            attempt++;
+            if (attempt <= 3) {
+              // Wait 3 seconds before next strike
+              await new Promise(r => setTimeout(r, 3000));
             }
           }
+        }
 
+        if (result) {
           item.title = result.title;
           item.category = result.category;
           item.keywords = result.keywords.join(', ');
           item.status = 'Completed';
-
           processedData.push(item);
           updateRowResult(item);
-        } catch (err) {
-          console.error(`Final Error on ${item.filename}:`, err);
+        } else {
+          // If all 3 strikes fail
           item.status = 'Failed';
-          
-          // Determine friendly error name for the UI Badge
           let errorBadge = "API Error";
-          if (err.message.includes("401") || err.message.includes("API key")) errorBadge = "Bad API Key";
-          else if (err.message.includes("429") || err.message.includes("quota")) errorBadge = "Rate Limit";
-          else if (err.message.includes("JSON")) errorBadge = "Format Error";
+          if (finalError.includes("401") || finalError.includes("key")) errorBadge = "Bad API Key";
+          else if (finalError.includes("429") || finalError.includes("quota")) errorBadge = "Rate Limit";
+          else if (finalError.includes("Safety")) errorBadge = "Blocked by AI";
           
-          updateRowStatus(item.id, errorBadge, 'bg-rose-900 text-rose-300', err.message);
+          updateRowStatus(item.id, errorBadge, 'bg-rose-900 text-rose-300', `Hover to read full error: ${finalError}`);
         }
         
         updateCounts();
-        
-        // Strict 4.5 second delay to protect against Gemini 15 RPM limits
+        // Mandatory 4.5 second delay between files to respect free tier rate limits
         await new Promise(r => setTimeout(r, 4500));
       }
       btn.disabled = false;
@@ -367,7 +375,6 @@ Rules:
 2. Keywords MUST contain exactly 15 to 25 tags (all lowercase).
 3. Do NOT include markdown ticks.`;
 
-    // Google Gemini API (Strict JSON enforcement added)
     async function callGeminiAPI(apiKey, filename, base64Image, mimeType, modelId) {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
       const contents = [{ parts: [{ text: SYSTEM_PROMPT + `\nFilename: ${filename}` }] }];
@@ -382,16 +389,19 @@ Rules:
         })
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(()=>({}));
-        throw new Error(err.error?.message || `API HTTP ${res.status}`);
-      }
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || `API HTTP ${res.status}`);
+      
+      // Safety Filter Check
+      if (!data.candidates || !data.candidates[0].content) {
+         const reason = data.candidates?.[0]?.finishReason || "Unknown Reason";
+         throw new Error(`Safety Filter Triggered (${reason})`);
+      }
+      
       return safeParseJSON(data.candidates[0].content.parts[0].text);
     }
 
-    // OpenAI API (Strict JSON enforcement added)
-    async function callOpenAIAPI(apiKey, filename, base64Image, modelId) {
+    async function callOpenAIAPI(apiKey, filename, base64Image, mimeType, modelId) {
       const endpoint = 'https://api.openai.com/v1/chat/completions';
       const userContent = [{ type: "text", text: `Filename: ${filename}` }];
       if (base64Image) userContent.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } });
@@ -406,11 +416,8 @@ Rules:
         })
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(()=>({}));
-        throw new Error(err.error?.message || `API HTTP ${res.status}`);
-      }
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || `API HTTP ${res.status}`);
       return safeParseJSON(data.choices[0].message.content);
     }
 
